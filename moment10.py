@@ -38,7 +38,7 @@ def mirror_line_profile_and_get_error(vsys):
 
     # flip velocity grid to increasing order if necessary
     if (vgrid[len(vgrid)-1] < vgrid[0]):
-       print("velocity grid is inverted -> flipping")
+       #print("velocity grid is inverted -> flipping")
        vgrid = np.flip(vgrid)
        line_profile_local = np.flip(line_profile)
     else:
@@ -121,41 +121,34 @@ def mirror_channel_and_get_error(PA,iv,iv0,plot=False):
        plt.pause(0.5)
 
     err = np.sqrt(np.mean((cplusr-cminus)**2))
-    print(" channel ",iv," trying PA=",PA,", rms residual is ",err)
+    #print(" channel ",iv," trying PA=",PA,", rms residual is ",err)
     return err
 
 def get_PA(PA0,iv0):
     x0 = np.array(0.)
     offset = 12
-    #mirror_channel_and_get_error(x0,iv0+6,iv0,plot=True)
-    #res = optimize.minimize(mirror_systemic_channel_and_get_error,x0,args=(iv0),bounds=[[-90.,90.]],method='nelder-mead',tol=0.01)
-    #res = optimize.minimize(mirror_channel_and_get_error,x0,args=(iv0+offset,iv0),bounds=[[-90.,90.]],method='dogleg')
-    #res = optimize.dual_annealing(mirror_channel_and_get_error,bounds=[[-90.,90.]],args=(iv0+offset,iv0))
     #
-    # brute force search for PA to nearest 5 degrees
+    # brute force search for PA to nearest 6 degrees
     #
-    res = optimize.brute(mirror_systemic_channel_and_get_error,args=([iv0]),Ns=30,ranges=[[0.,180.]],finish=None)
-#    kwargs = { 'method':'nelder-mead' }
-#    res = optimize.basinhopping(func=lambda x, y=iv0:mirror_systemic_channel_and_get_error(x,y),x0=x0,stepsize=30.,minimizer_kwargs=kwargs)
-    #res = optimize.dual_annealing(mirror_systemic_channel_and_get_error,args=([iv0]),bounds=[[-90.,90.]])
-    #res = optimize.shgo(func=lambda x, y=iv0+offset,z=iv0:mirror_channel_and_get_error(x,y,z),bounds=[[-90.,90.]])
-    print("brute force search gives PA = ",res)
-    PA = res #.x[0]
-    err = mirror_systemic_channel_and_get_error([PA],iv0,plot=False)
+    PA = optimize.brute(mirror_systemic_channel_and_get_error,args=([iv0]),Ns=30,ranges=[[0.,180.]],finish=None)
+    print("brute force search gives PA = ",PA)
+    #
+    # refine this with a simplex minimization
+    #
     x0 = PA
     res = optimize.minimize(mirror_systemic_channel_and_get_error,x0,args=(iv0),method='nelder-mead')
+    err = mirror_systemic_channel_and_get_error(res.x,iv0,plot=True)
     print('finished, got PA = ',PA,' with error ',err)
-    mirror_systemic_channel_and_get_error(res.x,iv0,plot=True)
+    #
     # try flipped 90 degrees
+    #
     PA = res.x[0]
     x0 = PA-90.
     res2 = optimize.minimize(mirror_systemic_channel_and_get_error,x0,args=(iv0),bounds=[[-90.,90.]],method='nelder-mead')
-    #res2 = optimize.minimize(mirror_channel_and_get_error,x0,args=(iv0+offset,iv0),bounds=[[-90.,90.]],method='nelder-mead')
-    #res = optimize.shgo(func=lambda x, y=iv0:mirror_systemic_channel_and_get_error(x,y),bounds=[[-90.,90.]])
-    #res2 = res
-    #res2.x[0] = res.x[0] - 90.
-    #mirror_channel_and_get_error(res2.x,iv0+offset,iv0,plot=True)
     print('finished, got PA = ',res2.x,' with error ',res2.fun)
+    #
+    # solve the 90 degree uncertainty with a channel offset from the systemic channel
+    #
     err1 = mirror_channel_and_get_error(res.x,iv0+offset,iv0,plot=True)
     err2 = mirror_channel_and_get_error(res2.x,iv0+offset,iv0,plot=True)
     print('comparison, got ',err1,err2,' for PA=',res.x[0],res2.x[0])
