@@ -3,17 +3,21 @@ import casa_cube as casa
 import cmasher as cmr
 import numpy as np
 import scipy.ndimage as ndimage
+import scipy.interpolate as interpolate
+import scipy.optimize as optimize
 
 nv = 25
-Vsyst = 6.0 #5.8  # HD163296
+Vsyst = 5.8  # HD163296
 win = 7
 PA = 154.8 -90. #43.3 # from MAPS (Huang+2018a)
 plt.rcParams['font.size'] = '12'
 
-#CO = casa.Cube('~/Observations/exoALMA/CQTau/CQ_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image.fits')
-CO = casa.Cube('~/Observations/exoALMA/DMTau/DM_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.JvMcorr.fits')
-CO.plot_line()
-plt.show()
+CO = casa.Cube('~/Observations/exoALMA/CQTau/CQ_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image.fits')
+#CO = casa.Cube('~/Observations/exoALMA/DMTau/DM_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.JvMcorr.fits')
+
+line_profile = np.nansum(CO.image, axis=(1,2)) / CO._beam_area_pix()
+#smoothCO = interpolate.Akima1DInterpolator(CO.velocity,np.nan_to_num(CO.image))
+
 #CO = casa.Cube('~/Observations/HD163296-MAPS/HD_163296_CO_220GHz.robust_0.5_wcont.image.fits')
 
 iv0 = np.abs(CO.velocity - Vsyst).argmin()
@@ -25,8 +29,53 @@ def flip_it(im,PA):
     im = np.fliplr(ndimage.rotate(im,PA+90.,reshape=False))
     return ndimage.rotate(im,-PA-90.-180.,reshape=False)
 
-#def get_channel(v):
-#    iv = np.abs(CO.velocity - v).argmin()
+def get_channel(v):
+    iv = np.abs(CO.velocity - v).argmin()
+    c1 = np.nan_to_num(CO.image[iv,:,:])
+    return c1
+
+def mirror_line_profile_and_get_error(vsys):
+    # shift everything so that systemic velocity corresponds to v=0
+    vgrid = CO.velocity - vsys
+
+    # plot original line profile
+    plt.xlim(np.min(vgrid),np.max(vgrid))
+    plt.plot(vgrid,line_profile)
+
+    # get profile mirrored across the systemic velocity
+    neg_channels = vgrid < 0.
+    pos_channels = np.logical_not(neg_channels)
+    pr = line_profile[pos_channels]
+    vr = vgrid[pos_channels]
+
+    # reflect the negative channels across the v=0 axis
+    pl = np.flip(line_profile[neg_channels])
+    vl = np.flip(np.abs(vgrid[neg_channels]))
+
+    # get smoothed versions of both profiles
+    sl = interpolate.CubicSpline(vl,pl,extrapolate=False)
+    sr = interpolate.CubicSpline(vr,pr,extrapolate=False)
+    xs = np.linspace(0.,np.max(vgrid),1000)
+    pls = sl(xs)
+    prs = sr(xs)
+
+    # plot smoothed and reflected profiles and the difference
+    plt.plot(xs,pls)
+    plt.plot(xs,prs)
+    plt.plot(xs,prs-pls)
+
+    # compute the error between the two
+    err2 = np.nansum((prs-pls)**2)/np.size(xs)
+    filename='lineprofile-vsys-%f.png' % (vsys)
+    print("vys = ",vsys,"err2 = ",err2," -> ",filename)
+    plt.savefig(filename)
+    return err2
+
+def get_vsyst_from_line_profile():
+    x0 = np.array([Vsyst])
+    res = optimize.minimize(mirror_line_profile_and_get_error,x0,bounds=[[Vsyst-3.,Vsyst+3.]],method='Nelder-Mead')
+    print('finished, got vsys = ',res.x,' with error ',res.fun)
+    return res.x
 
 def get_vsyst(PA):
     errmin = 1e8
@@ -45,7 +94,7 @@ def get_vsyst(PA):
         print("error is ",err,' systemic channel is',iv00,' with v=',CO.velocity[iv00])
     return CO.velocity[iv00]
 
-#vsyst = get_vsyst(PA)
+vsyst = get_vsyst_from_line_profile()
 
 map = np.zeros(np.shape(CO.image[iv0,:,:]))
 for i in range(int(nv/2)+1):
