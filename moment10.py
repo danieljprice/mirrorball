@@ -9,8 +9,9 @@ import scipy.optimize as optimize
 win = 7
 plt.rcParams['font.size'] = '12'
 
-CO = casa.Cube('~/Observations/exoALMA/SYCha/SY_Cha_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image_denoise.fits')
-#CO = casa.Cube('~/Observations/exoALMA/SYCha/SY_Cha_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.JvMcorr.fits')
+#CO = casa.Cube('~/Observations/exoALMA/HD34282/HD_34282_12CO_robust0.5_width0.028kms_threshold4.0sigma_taper0.15arcsec.clean.image.fits')
+#CO = casa.Cube('~/Observations/exoALMA/SYCha/SY_Cha_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image_denoise.fits')
+CO = casa.Cube('~/Observations/exoALMA/SYCha/SY_Cha_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.JvMcorr.fits')
 #CO = casa.Cube('~/Observations/IMLup/MAPS/IM_Lup_CO_220GHz.robust_0.5_wcont.JvMcorr.image.fits')
 #CO = casa.Cube('~/Observations/PDS70/PDS70_COcube_robust-0.5_uvtaper0.03.fits')
 #CO = casa.Cube('~/Observations/exoALMA/CQTau/CQ_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image.fits')
@@ -18,6 +19,8 @@ CO = casa.Cube('~/Observations/exoALMA/SYCha/SY_Cha_12CO_robust0.5_width0.1kms_t
 #CO = casa.Cube('~/Observations/HD163296-MAPS/HD_163296_CO_220GHz.robust_0.5_wcont.image.fits')
 
 nv = len(CO.velocity)
+print("got %i channels" %(nv-1))
+
 line_profile = np.nansum(CO.image, axis=(1,2)) / CO._beam_area_pix()
 
 def flip_it(im,PA):
@@ -60,10 +63,6 @@ def mirror_line_profile_and_get_error(vsys,plot=False):
        and subtract one side from the other to get the residual. The idea is that
        the systemic velocity is the one which minimises this residual
     """
-    #rotate to major axis, flip and rotate back
-    im = np.fliplr(ndimage.rotate(im,PA+90.,reshape=False))
-    return ndimage.rotate(im,-PA-90.-180.,reshape=False)
-
     # shift everything so that systemic velocity corresponds to v=0
     vgrid = CO.velocity - vsys
 
@@ -268,12 +267,29 @@ def mirror_cube(Vsys,PA,plot=False):
        cplusr = flip_it(cplus,PA)
        if (plot):
           fig, axes = plt.subplots(1,3, figsize=(21,8), sharex='all', sharey='all', num=win)
+          pix_scale = CO.pixelscale
+          xlabel = r'$\Delta$ RA (")'
+          ylabel = r'$\Delta$ Dec (")'
+          xaxis_factor = -1
+          #limit = 5. # arcsec
+          halfsize = np.asarray(cminus.shape) / 2 * pix_scale
+          extent = [-halfsize[0]*xaxis_factor,halfsize[0]*xaxis_factor, -halfsize[1], halfsize[1]]
+          axes[0].set_xlabel(xlabel)
+          axes[0].set_ylabel(ylabel)
+          #axes[0].set_xlim(limit,-limit)
+          #axes[0].set_ylim(-limit,limit)
           axes[0].set_title('V={:.2f} km/s, Vsys={:.2f} km/s'.format(CO.velocity[iv]-Vsys,Vsys))
-          axes[0].imshow(cminus,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+          axes[0].imshow(cminus,vmin=0.,vmax=0.04,cmap='viridis',origin='lower',extent=extent)
+          axes[1].set_xlabel(xlabel)
+          #axes[0].set_xlim(limit,-limit)
+          #axes[0].set_ylim(-limit,limit)
           axes[1].set_title('V={:.2f} km/s flipped, PA={:.2f} deg'.format(vsym-Vsys,PA))
-          axes[1].imshow(cplusr,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+          axes[1].imshow(cplusr,vmin=0.,vmax=0.04,cmap='viridis',origin='lower',extent=extent)
+          axes[2].set_xlabel(xlabel)
+          #axes[0].set_xlim(limit,-limit)
+          #axes[0].set_ylim(-limit,limit)
           axes[2].set_title('residual')
-          axes[2].imshow(cplusr-cminus,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower')
+          axes[2].imshow(cplusr-cminus,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower',extent=extent)
           plt.savefig('channel'+str(iv).zfill(3)+'.png')
           #plt.pause(0.5)
           plt.close(fig)
@@ -307,10 +323,11 @@ def get_vsys_and_PA():
     print("refined PA is ",PA," degrees")
     return Vsyst[0],PA
 
-(Vsyst,PA) = get_vsys_and_PA()
+#(Vsyst,PA) = get_vsys_and_PA()
 
+#(Vsyst,PA) = (-2.339460,27.737111) # HD34282
 #(Vsyst,PA) = (4.126982,74.243033) # SY Cha denoise
-#(Vsyst,PA) = (4.147810,74.062892) # SY Cha
+(Vsyst,PA) = (4.147810,74.062892) # SY Cha
 #(Vsyst,PA) = (4.502893,54.819273) # IM Lup
 #(Vsyst,PA) = (4.4,53.) # IM Lup literature
 #(Vsyst,PA) = (5.715284,66.469651) # PDS 70
