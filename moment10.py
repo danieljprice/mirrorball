@@ -7,8 +7,6 @@ import scipy.interpolate as interpolate
 import scipy.optimize as optimize
 
 win = 7
-Vsyst = 5.8  # HD163296
-PA = 154.8 -90. #43.3 # from MAPS (Huang+2018a)
 plt.rcParams['font.size'] = '12'
 
 #CO = casa.Cube('~/Observations/exoALMA/CQTau/CQ_Tau_12CO_robust0.5_width0.1kms_threshold4.0sigma.clean.image.fits')
@@ -16,12 +14,7 @@ plt.rcParams['font.size'] = '12'
 CO = casa.Cube('~/Observations/HD163296-MAPS/HD_163296_CO_220GHz.robust_0.5_wcont.image.fits')
 
 nv = len(CO.velocity)
-
 line_profile = np.nansum(CO.image, axis=(1,2)) / CO._beam_area_pix()
-
-#iv0 = np.abs(CO.velocity - Vsyst).argmin()
-#iv0 = 63 #np.abs(CO.velocity - Vsyst).argmin()
-#print("systemic channel is ",iv0," v = ",CO.velocity[iv0], ' max v is ',np.max(CO.velocity))
 
 def flip_it(im,PA):
     #rotate to major axis, flip and rotate back
@@ -37,7 +30,8 @@ def get_channel(v):
     if (ivp1 > len(CO.velocity) or ivm1 < 0):
        return CO.image[iv,:,:],iv,iv
 
-    if (CO.velocity[iv] < v and CO.velocity[ivp1] >= v):
+    # deal with channels in either increasing or decreasing order
+    if ((CO.velocity[iv] < v and CO.velocity[ivp1] >= v) or (CO.velocity[ivp1] <= v and CO.velocity[iv] > v)):
        iv1 = ivp1
     else:
        iv1 = ivm1
@@ -47,7 +41,7 @@ def get_channel(v):
     dv = v - CO.velocity[iv]
     deltav = CO.velocity[iv1] - CO.velocity[iv]
     x = dv/deltav
-    print("retrieving channel at v=",v," between ",CO.velocity[iv]," and ",CO.velocity[iv1]," pos = ",x)
+    #print("retrieving channel at v=",v," between ",CO.velocity[iv]," and ",CO.velocity[iv1]," pos = ",x)
     return c1*(1.-x) + x*c2,iv,iv1
 
 def mirror_line_profile_and_get_error(vsys,plot=False):
@@ -212,49 +206,66 @@ def plot_interpolated_channel(vsys):
     plt.show()
     return
 
-Vsyst = get_vsyst_from_line_profile()
-iv0 = np.abs(CO.velocity - Vsyst).argmin()
-print("closest channel to systemic is ",iv0," v = ",CO.velocity[iv0],CO.velocity[iv0+1])
-#plot_interpolated_channel(Vsyst)
+def mirror_cube(Vsys,PA,plot=False):
+    iv0 = np.abs(CO.velocity - Vsys).argmin()
+    cube = np.zeros(np.shape(CO.image[:,:,:]))
+    #map = np.zeros(np.shape(CO.image[iv0,:,:]))
+    for iv in range(2*int(nv/2)-1):
+       dv = CO.velocity[iv] - Vsys
+       vsym = Vsys - dv
+       print('channel ',iv,' V=',CO.velocity[iv],' goes with V=',vsym)
+       cminus = np.nan_to_num(CO.image[iv,:,:])
+       cplus,iv1,iv2 = get_channel(vsym)
+       cplusr = flip_it(cplus,PA)
+       if (plot):
+          fig, axes = plt.subplots(1,3, figsize=(21,8), sharex='all', sharey='all', num=win)
+          axes[0].set_title('V={:.2f} km/s, Vsys={:.2f} km/s'.format(CO.velocity[iv]-Vsys,Vsys))
+          axes[0].imshow(cminus,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+          axes[1].set_title('V={:.2f} km/s flipped, PA={:.2f} deg'.format(vsym-Vsys,PA))
+          axes[1].imshow(cplusr,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+          axes[2].set_title('residual')
+          axes[2].imshow(cplusr-cminus,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower')
+          plt.savefig('channel'+str(iv).zfill(3)+'.png')
+          #plt.pause(0.5)
+          plt.close(fig)
 
-#PA=43.3
-#Vsyst = get_vsyst_from_channels(Vsyst,PA)
+       cube[iv,:,:] = cplusr - cminus
 
-PA = get_PA(iv0,Vsyst)
-print("PA is ",PA," degrees")
+    if (plot):
+       import os
+       os.system('ffmpeg -i channel%03d.png -r 10 -vb 50M -bt 100M -pix_fmt yuv420p -vf setpts=4.\*PTS mirror-channels.mp4')
 
-Vsyst = get_vsyst_from_channels(Vsyst,[PA])
-PA = get_PA(iv0,Vsyst,PA0=PA)
-print("refined PA is ",PA," degrees")
+    return cube
 
-map = np.zeros(np.shape(CO.image[iv0,:,:]))
-for iv in range(nv): #range(int(nv/2)+1):
-    #iv = iv0 + i - int(nv/2)
-    #iv_sym = iv0+(nv-1)-int(nv/2)-i
+def get_vsys_and_PA():
+    Vsyst = get_vsyst_from_line_profile()
+    iv0 = np.abs(CO.velocity - Vsyst).argmin()
+    print("closest channel to systemic is ",iv0," v = ",CO.velocity[iv0],CO.velocity[iv0+1])
+    #plot_interpolated_channel(Vsyst)
 
-    dv = CO.velocity[iv] - Vsyst
-    vsym = Vsyst - dv
-    print('channel ',iv,' V=',CO.velocity[iv],' goes with V=',vsym)
-    cminus = np.nan_to_num(CO.image[iv,:,:])
-    cplus,iv1,iv2 = get_channel(vsym)
-    cplusr = flip_it(cplus,PA)
+    #PA=43.3
+    #Vsyst = get_vsyst_from_channels(Vsyst,PA)
 
-    fig, axes = plt.subplots(1,3, figsize=(21,8), sharex='all', sharey='all', num=win)
-    axes[0].set_title('Vsys = {} km/s, PA={} deg, V = {} km/s'.format(vys,PACO.velocity[iv]-Vsyst))
-    axes[0].imshow(cminus,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
-    axes[1].set_title('V = {} km/s flipped'.format(vsym-Vsyst))
-    axes[1].imshow(cplusr,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
-    axes[2].set_title(' residual')
-    axes[2].imshow(cplusr-cminus,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower')
-    plt.savefig('channel%i.png' % iv)
-    plt.pause(0.5)
-    plt.close(fig)
+    PA = get_PA(iv0,Vsyst,PA0=45.)
+    print("PA is ",PA," degrees")
 
-    map = map + (cplusr-cminus)
+    Vsyst = get_vsyst_from_channels(Vsyst,[PA])
+    PA = get_PA(iv0,Vsyst,PA0=PA)
+    print("refined PA is ",PA," degrees")
+    return Vsyst,PA
 
-map = map/nv
-print(np.min(map),np.max(map))
-#plt.imshow(CO.image[0,:,:],vmin=0.,vmax=0.05,cmap='Greys')  # add continuum
-plt.imshow(map,vmin=-0.002,vmax=0.002,cmap='inferno',origin='lower')
+(Vsyst,PA) =(5.763665,42.343013)
+#Vsyst,PA = get_vsys_and_PA()
+print(" USING Vsyst = %f, PA=%f " %(Vsyst,PA))
+
+CO.image = mirror_cube(Vsyst,PA,plot=True)
+print("writing to mirror.fits...")
+CO.writeto('mirror.fits')
+
+CO.plot(moment=0,fmin=-0.002,fmax=0.002,limit=0.3,cmap='inferno')
 plt.savefig('HD163-moment10.png',bbox_inches='tight')
+plt.show()
+
+CO.plot(moment=1,limit=0.3,cmap='RdBu_r')
+plt.savefig('HD163-moment101.png',bbox_inches='tight')
 plt.show()
