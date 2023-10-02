@@ -66,7 +66,7 @@ class cube:
         #print("retrieving channel at v=",v," between ",CO.velocity[iv]," and ",CO.velocity[iv1]," pos = ",x)
         return c1*(1.-x) + x*c2,iv,iv1
     
-    def mirror_line_profile_and_get_error(self,vsys,plot=False):
+    def mirror_line_profile_and_get_error(self,vsys,vmin=None,vmax=None,plot=False):
         """
            reflect the line profile across an axis corresponding to the systemic velocity
            and subtract one side from the other to get the residual. The idea is that
@@ -97,8 +97,13 @@ class cube:
         sl = interpolate.CubicSpline(vl,pl,extrapolate=False)
         sr = interpolate.CubicSpline(vr,pr,extrapolate=False)
         xs = np.linspace(0.,np.max(vgrid),1000)
-        pls = sl(xs)
-        prs = sr(xs)
+
+        if (vmin is not None and vmax is not None):
+           xcut = xs[(xs > vmin) & (xs < vmax)]
+        else:
+           xcut = xs
+        pls = sl(xcut)
+        prs = sr(xcut)
     
         # compute the error between the two
         err2 = np.nansum((prs-pls)**2)/np.size(xs)
@@ -110,29 +115,60 @@ class cube:
            fig,ax = plt.subplots()
            ax.set_xlim(np.min(vgrid),np.max(vgrid))
            ax.plot(vgrid,line_profile_local)
-           ax.plot(xs,pls)
-           ax.plot(xs,prs)
-           ax.plot(xs,prs-pls)
+           ax.plot(xcut,pls,c='green')
+           ax.plot(-xcut,pls,c='green')
+           ax.plot(xcut,prs,c='orange')
+           ax.plot(xcut,prs-pls,c='red')
+           ax.axvline(0., color='grey', linestyle='dotted')
            plt.show()
            #plt.savefig(filename)
            plt.close(fig)
     
         return err2
     
-    def get_vsys_from_line_profile(self,vsys,dv=None):
+    def get_vsys_from_line_profile(self,dvtry=None,vmin=None,vmax=None,plot=True):
         """
            fit for the systemic velocity (defined here as the symmetry axis for the line profile)
-        """        
-        # fit between +/- 3 km/s from systemic velocity by default
-        if (dv is None):
-           dv = 3.
+        """
+        # initial guess
+        vsys = np.mean(self.CO.velocity)  # a wild guess
+ 
+        # use flat prior +/- 3 km/s from mean velocity by default
+        if (dvtry is None):
+           dvtry = 3.
 
-        bounds = [[vsys-dv,vsys+dv]]
+        bounds = [[vsys-dvtry,vsys+dvtry]]
         x0 = np.array([vsys])
-        res = optimize.minimize(self.mirror_line_profile_and_get_error,x0,bounds=bounds,method='Nelder-Mead')
-        self.mirror_line_profile_and_get_error(res.x,plot=True)
-        print('finished, got vsys = ',res.x,' with error ',res.fun)
+        res = optimize.minimize(self.mirror_line_profile_and_get_error,x0,args=(vmin,vmax),bounds=bounds,method='Nelder-Mead')
+        self.mirror_line_profile_and_get_error(res.x,vmin=vmin,vmax=vmax,plot=plot)
+        print(' got vsys = ',res.x,' with error ',res.fun, ' using v from ',vmin,' to ',vmax)
         return res.x
+
+    def get_vsys_as_function_of_v(self,plot=False,label=None):
+        vsys_values = []
+        dvchan = 1.0*(self.CO.velocity[1] - self.CO.velocity[0])
+        dvtry = 3.
+        v_values = np.arange(dvchan,dvtry,dvchan)
+        print(' channel spacing is ',dvchan,' km/s')
+        for v in v_values:
+            vsysi = self.get_vsys_from_line_profile(dvtry=dvtry,vmin=v,vmax=v+dvchan,plot=True)
+            #print('v = ',v,' vsys = ',vsysi,' fit from ',v,' to ',v+dvchan,' km/s')
+            vsys_values.append(vsysi)
+
+        vsys_tot,verr_tot = self.get_vsys_from_line_profile(dvtry=dvtry,plot=False)
+
+        if (plot):
+           fig,ax = plt.subplots()
+           ax.plot(v_values,vsys_values)
+           #ax.errorbar(v_values,vsys_values,yerr=verr_values)
+           ax.set_xlabel('v-vsys [km/s]')
+           ax.set_ylabel('vsys [km/s]')
+           ax.axhline(vsys_tot, color='red', linestyle='dotted')
+           plt.show()
+           #plt.savefig(filename)
+           plt.close(fig)
+
+        return vsys_values,v_values
     
     def mirror_systemic_channel_and_get_error(self,PA,iv,plot=False,image=None):
         """
@@ -338,8 +374,7 @@ class cube:
            fit both the systemic velocity and position angle
            with increasing degrees of sophistication
         """
-        self.vsys = np.mean(self.CO.velocity)  # a wild guess
-        self.vsys = self.get_vsys_from_line_profile(self.vsys)
+        self.vsys = self.get_vsys_from_line_profile()
         iv0 = np.abs(self.CO.velocity - self.vsys).argmin()
         print("closest channel to systemic is ",iv0," v = ",self.CO.velocity[iv0],self.CO.velocity[iv0+1])
         #plot_interpolated_channel(vsyst)
