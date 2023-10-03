@@ -26,6 +26,11 @@ class cube:
             self.CO = casa.Cube(self.file,**kwargs)
             self.nv = len(self.CO.velocity)
             print("got %i channels" %(self.nv-1))
+
+            if (self.nv > 1):
+               self.dvchan = 1.0*(self.CO.velocity[1] - self.CO.velocity[0])
+               print(' channel spacing is ',self.dvchan,' km/s')
+
             self.line_profile = np.nansum(self.CO.image, axis=(1,2)) / self.CO._beam_area_pix()
 
         except OSError:
@@ -132,6 +137,7 @@ class cube:
         """
         # initial guess
         vsys = np.mean(self.CO.velocity)  # a wild guess
+        # print(" initial guess is ",vsys,self.CO.velocity)
  
         # use flat prior +/- 3 km/s from mean velocity by default
         if (dvtry is None):
@@ -144,18 +150,16 @@ class cube:
         print(' got vsys = ',res.x,' with error ',res.fun, ' using v from ',vmin,' to ',vmax)
         return res.x
 
-    def get_vsys_as_function_of_v(self,plot=False,label=None):
+    def get_vsys_as_function_of_v(self,plot=False,filename='vsys-vs-v.pdf'):
         vsys_values = []
-        dvchan = 1.0*(self.CO.velocity[1] - self.CO.velocity[0])
         dvtry = 3.
-        v_values = np.arange(dvchan,dvtry,dvchan)
-        print(' channel spacing is ',dvchan,' km/s')
+        deltav = self.dvchan
+        v_values = np.arange(deltav,dvtry,deltav)
         for v in v_values:
-            vsysi = self.get_vsys_from_line_profile(dvtry=dvtry,vmin=v,vmax=v+dvchan,plot=True)
-            #print('v = ',v,' vsys = ',vsysi,' fit from ',v,' to ',v+dvchan,' km/s')
+            vsysi = self.get_vsys_from_line_profile(dvtry=dvtry,vmin=v,vmax=v+deltav,plot=True)
             vsys_values.append(vsysi)
 
-        vsys_tot,verr_tot = self.get_vsys_from_line_profile(dvtry=dvtry,plot=False)
+        vsys_tot = self.get_vsys_from_line_profile(dvtry=dvtry,plot=False)
 
         if (plot):
            fig,ax = plt.subplots()
@@ -164,10 +168,11 @@ class cube:
            ax.set_xlabel('v-vsys [km/s]')
            ax.set_ylabel('vsys [km/s]')
            ax.axhline(vsys_tot, color='red', linestyle='dotted')
+           print("saving to ",filename)
+           plt.savefig(filename,bbox_inches='tight')
            plt.show()
-           #plt.savefig(filename)
            plt.close(fig)
-
+        
         return vsys_values,v_values
     
     def mirror_systemic_channel_and_get_error(self,PA,iv,plot=False,image=None):
@@ -281,12 +286,12 @@ class cube:
     
         return res.x[0]
     
-    def get_vsys_from_channels(self,vsys0,PA):
+    def get_vsys_from_channels(self,vsys0,PA,vsys0_err=0.2):
         """
            fit for the systemic velocity by reflecting the image of the systemic channel about the symmetry axis
            this should give more precise results than just reflecting the line profile
         """
-        res = optimize.minimize(self.mirror_at_vsys,vsys0,args=(PA),bounds=[[vsys0-0.2,vsys0+0.2]],method='nelder-mead')
+        res = optimize.minimize(self.mirror_at_vsys,vsys0,args=(PA),bounds=[[vsys0-vsys0_err,vsys0+vsys0_err]],method='nelder-mead')
         print('finished, got vsys = ',res.x,' with error ',res.fun)
         self.mirror_at_vsys(res.x,PA,plot=True)
         return res.x
