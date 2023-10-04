@@ -63,8 +63,8 @@ class cube:
         else:
            iv1 = ivm1
     
-        c1 = np.nan_to_num(self.CO.image[iv,:,:])
-        c2 = np.nan_to_num(self.CO.image[iv1,:,:])
+        c1 = np.nan_to_num(self.CO.image[iv,:,:],copy=False)
+        c2 = np.nan_to_num(self.CO.image[iv1,:,:],copy=False)
         dv = v - self.CO.velocity[iv]
         deltav = self.CO.velocity[iv1] - self.CO.velocity[iv]
         x = dv/deltav
@@ -151,6 +151,10 @@ class cube:
         return res.x
 
     def get_vsys_as_function_of_v(self,plot=False,filename='vsys-vs-v.pdf'):
+        """
+            fit for systemic velocity as a function of velocity, by mirroring short segments of the line profile
+            and minimising the error between the two halves
+        """
         vsys_values = []
         dvtry = 3.
         deltav = self.dvchan
@@ -217,34 +221,117 @@ class cube:
         image,iv,iv1 = self.get_channel(vsys)
         return self.mirror_systemic_channel_and_get_error(PA,iv,image=image,plot=plot)
     
-    def mirror_channel_and_get_error(self,PA,iv,iv0,plot=False):
+    def mirror_channel_and_get_error(self,PA,vsys,iv,plot=False,interpolate=True):
         """
            compare and subtract a channel from its mirror pair across the symmetry axis
         """
+    
+        channel = np.nan_to_num(self.CO.image[iv,:,:],copy=False)
+        iv0 = np.abs(self.CO.velocity - vsys).argmin()  # systemic channel
         i = iv - iv0 + int(self.nv/2)
-        iv_sym = iv0 + (self.nv-1) - int(self.nv/2) - i
-        cminus = np.nan_to_num(self.CO.image[iv,:,:])
-        cplus = np.nan_to_num(self.CO.image[iv_sym,:,:])
-    
-        cplusr = self.flip_it(cplus,PA[0])
-        cminusr = self.flip_it(cminus,PA[0])
-    
-        err = np.sqrt(np.mean((cplusr-cminus)**2))
-        print('channel ',iv,' goes with ',iv_sym,' trying PA ',PA,' rms is ',err)
+
+        if (interpolate):
+           dv = self.CO.velocity[iv] - vsys
+           vsym = vsys - dv
+           #print('channel ',iv,' V=',self.CO.velocity[iv],' goes with V=',vsym)
+           channel_opposite,iv1,iv2 = self.get_channel(vsym)
+        else:
+           iv_sym = iv0 + (self.nv-1) - int(self.nv/2) - i
+           #print('channel ',iv,' goes with ',iv_sym)
+           channel_opposite = np.nan_to_num(self.CO.image[iv_sym,:,:])    
+
+        channel_opposite_flipped = self.flip_it(channel_opposite,PA[0])
+        err = np.sqrt(np.mean((channel_opposite_flipped-channel)**2))
+        #if (not plot):
+           #print(' trying PA ',PA,' rms is ',err)
         #print(" channel ",iv," trying PA=",PA,", rms residual is ",err)
     
         if (plot):
            win = 7
            plt.rcParams['font.size'] = '12'
            fig, axes = plt.subplots(1,3, figsize=(21,8), sharex='all', sharey='all', num=win)
-           axes[0].imshow(cminus,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
-           axes[1].imshow(cplusr,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
-           axes[2].imshow(cplusr-cminus,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower')
-           plt.savefig('channel%i.png' % i)
+           (nx,ny) = np.shape(channel)
+           dl = nx/2
+            # Convert the angle from degrees to radians
+           PA_rad = np.deg2rad(PA[0])
+           # Calculate the start and end points
+           x1 = (nx/2 - dl * np.cos(PA_rad),ny/2 - dl * np.sin(PA_rad))
+           x2 = (nx/2 + dl * np.cos(PA_rad),ny/2 + dl * np.sin(PA_rad))
+
+           axes[0].set_title('V = {:.2f} km/s'.format(dv))
+           axes[0].imshow(channel,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+           #axes[0].axline((0, 0), slope=np.tan(np.deg2rad(PA[0])), color='grey', linestyle='dotted')
+           axes[0].plot([x1[0], x2[0]], [x1[1], x2[1]],color='grey', linestyle='dotted' )
+           axes[1].set_title('V = {:.2f} km/s'.format(-dv))
+           axes[1].imshow(channel_opposite_flipped,vmin=0.,vmax=0.04,cmap='viridis',origin='lower')
+           #axes[1].axline((0, 0), slope=np.tan(np.deg2rad(PA[0])), color='grey', linestyle='dotted')
+           axes[1].plot([x1[0], x2[0]], [x1[1], x2[1]],color='grey', linestyle='dotted' )
+
+           axes[2].set_title('residual')
+           axes[2].imshow(channel_opposite_flipped-channel,vmin=-0.01,vmax=0.01,cmap='inferno_r',origin='lower')
+           axes[2].text(0.5, 0.1, 'PA = {:.2f}, vsys = {:.2f}, err = {:.4f}'.format(PA[0], vsys,err), transform=axes[2].transAxes, verticalalignment='top', horizontalalignment='center')
+           axes[2].plot([x1[0], x2[0]], [x1[1], x2[1]],color='grey', linestyle='dotted' )
+
+           #axes[2].axline((0, 0), slope=np.tan(np.deg2rad(PA[0])), color='grey', linestyle='dotted')
+           plt.savefig('channel{:03d}.png'.format(i))
            plt.pause(0.5)
+           plt.close(fig)
     
         return err
+
+    def get_PA_for_each_channel(self,vsys=None,PA=None,plot=True,plot_progress=True,dvmax=2.,filename='PA_values.pdf'):
+        """
+           fit for an individual position angle and systemic velocity for each pair of channels
+           this version assumes that the systemic velocity is the centre of a given channel
+           and therefore does not do interpolation
+        """
+
+        # initial guess for each pair of channels is always the best fit global vsys and PA
+        if (vsys is None and self.vsys is not None):
+           vsys = self.vsys
+        if (PA is None and self.PA is not None):
+           PA = self.PA
+        
+        if (vsys is None or PA is None):
+           self.get_vsys_and_PA()
+           
+        iv0 = np.abs(self.CO.velocity - vsys).argmin()  # systemic channel
+        print('nearest channel to systemic velocity of {:.3f} is {}'.format(vsys,iv0))
+        dv_values = []
+        PA_values = []
+        for iv in reversed(range(int(self.nv/2))):
+            dv = self.CO.velocity[iv] - vsys
+            if (np.abs(dv) < dvmax):
+               res = optimize.minimize(self.mirror_channel_and_get_error,[PA],args=(vsys,iv,plot_progress,True),bounds=[[PA-90.,PA+90.]],method='nelder-mead',options={'xtol': 0.2})
+               dv_values.append(dv)
+               PA_values.append(res.x[0])
+               print ('fitted PA for channel ',iv,' v = ',self.CO.velocity[iv], ' dv = ',dv,' got PA = ',res.x[0],' initial guess was ',PA)
+
+        if (plot):
+           self.plot_PA_values(PA_values=PA_values,dv_values=dv_values,PA=PA,filename=filename,show=True)
+
+        self.PA_values = PA_values
+        self.dv_values = dv_values
+
+        return PA_values,dv_values   
     
+    def plot_PA_values(PA_values,dv_values,PA,filename=None,show=True):
+        fig,ax = plt.subplots()
+        ax.plot(dv_values,PA_values)
+        #ax.errorbar(v_values,vsys_values,yerr=verr_values)
+        ax.set_xlabel('v-vsys [km/s]')
+        ax.set_ylabel('PA [degrees]')
+        ax.axhline(PA, color='red', linestyle='dotted')
+
+        if (filename is not None):
+           print("saving to ",filename)
+           plt.savefig(filename,bbox_inches='tight')
+ 
+        if (show):
+           plt.show()
+
+        plt.close(fig)
+
     def get_PA(self,iv0,vsys,PA0=None):
         """
            fitting procedure to obtain the position angle of the symmetry axis
